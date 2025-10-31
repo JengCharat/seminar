@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Eye Gaze Image/Text Enlarger",
+  "version": "1.0.0",
+  "description": "ขยายรูปและข้อความตามสายตา พร้อม calibration แบบแม่นยำ",
+  "action": {
+    "default_title": "Open popup",
+    "default_popup": "popup.html"
+  },
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*/*", "http://*/*"],
+      "js": ["libs/webgazer.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
