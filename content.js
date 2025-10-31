@@ -87,7 +87,6 @@ function startGazeTracking() {
   }).begin();
 }
 
-// --- Calibration 25 จุด ---
 // --- Calibration 9 จุด (3x3) ---
 function setupCalibration() {
   webgazer.showVideo(true);
@@ -139,10 +138,8 @@ function setupCalibration() {
 
     sampleCount++;
     if (sampleCount < maxSamples) {
-      // เก็บซ้ำที่จุดเดิม
       calibrationDot.style.background = sampleCount % 2 === 0 ? "red" : "orange";
     } else {
-      // ไปจุดถัดไป
       index++;
       showNextDot();
     }
@@ -150,3 +147,28 @@ function setupCalibration() {
 
   showNextDot();
 }
+
+// --- Overlay แสดงขนาดหน้าจอ ---
+const screenSizeOverlay = document.createElement("div");
+screenSizeOverlay.style.position = "fixed";
+screenSizeOverlay.style.right = "10px";
+screenSizeOverlay.style.top = "10px";
+screenSizeOverlay.style.padding = "5px 10px";
+screenSizeOverlay.style.background = "rgba(0,0,0,0.6)";
+screenSizeOverlay.style.color = "white";
+screenSizeOverlay.style.fontSize = "14px";
+screenSizeOverlay.style.fontFamily = "monospace";
+screenSizeOverlay.style.zIndex = 10000;
+screenSizeOverlay.style.borderRadius = "5px";
+screenSizeOverlay.style.pointerEvents = "none"; // ไม่รบกวน interaction
+document.body.appendChild(screenSizeOverlay);
+
+function updateScreenSizeOverlay() {
+  screenSizeOverlay.textContent = `${window.innerWidth} x ${window.innerHeight}`;
+}
+
+// เรียกครั้งแรก
+updateScreenSizeOverlay();
+
+// อัปเดตทุกครั้งที่ resize
+window.addEventListener("resize", updateScreenSizeOverlay);

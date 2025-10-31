@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Eye Gaze Image/Text Enlarger",
+  "name": "before final",
   "version": "1.0.0",
   "description": "ขยายรูปและข้อความตามสายตา พร้อม calibration แบบแม่นยำ",
   "action": {
