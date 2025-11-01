@@ -1,6 +1,7 @@
 let gazeEnabled = false;
 let currentElement = null;
-const SCALE = 1.5;
+let currentDistance = 50; // เริ่มต้นระยะเฉลี่ย (cm)
+const BASE_SCALE = 1.0;
 const DURATION = 200;
 
 // --- smoothing เพื่อลด jitter ---
@@ -15,7 +16,14 @@ function smoothGaze(x, y, alpha = 0.2) {
   return { x: lastX, y: lastY };
 }
 
-// --- ขยาย element ตาม gaze ---
+// --- คำนวณ scale ตามระยะที่ได้จาก Python ---
+function getScaleFromDistance(distance) {
+  const clamped = Math.max(20, Math.min(80, distance)); // จำกัดช่วง 20–80 cm
+  const scale = BASE_SCALE + (80 - clamped) / 100; // ยิ่งใกล้ ยิ่งขยาย
+  return scale;
+}
+
+// --- ขยาย element ตาม gaze + ระยะ ---
 function enlargeElementByGaze(el, gazeX, gazeY) {
   const rect = el.getBoundingClientRect();
   if (
@@ -26,10 +34,11 @@ function enlargeElementByGaze(el, gazeX, gazeY) {
 
     const offsetX = ((gazeX - rect.left) / rect.width) * 100;
     const offsetY = ((gazeY - rect.top) / rect.height) * 100;
+    const scale = getScaleFromDistance(currentDistance);
 
     el.style.transition = `transform ${DURATION}ms ease`;
     el.style.transformOrigin = `${offsetX}% ${offsetY}%`;
-    el.style.transform = `scale(${SCALE})`;
+    el.style.transform = `scale(${scale})`;
     el.style.zIndex = 999;
 
     currentElement = el;
@@ -50,8 +59,9 @@ function resetElement(el) {
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "ENABLE_GAZE") {
     gazeEnabled = true;
+    startWebSocketConnection(); // ✅ เริ่มเชื่อมต่อ Python
     startGazeTracking();
-    startAgeEstimation(); // เริ่มฟังก์ชันวัดอายุพร้อมกัน
+    startAgeEstimation();
   }
   if (msg.type === "DISABLE_GAZE") {
     gazeEnabled = false;
@@ -66,7 +76,6 @@ chrome.runtime.onMessage.addListener((msg) => {
 function getCorrectedX(x) {
   const video = document.querySelector('video');
   if (!video) return x;
-
   const isMirrored = video.style.transform.includes('scaleX(-1)');
   return isMirrored ? window.innerWidth - x : x;
 }
@@ -78,7 +87,6 @@ function startGazeTracking() {
 
   webgazer.setGazeListener((data) => {
     if (!gazeEnabled || !data) return;
-
     let { x, y } = smoothGaze(data.x, data.y);
     x = getCorrectedX(x);
 
@@ -88,7 +96,28 @@ function startGazeTracking() {
   }).begin();
 }
 
-// --- Calibration 9 จุด (3x3) ---
+// --- WebSocket จาก Python ---
+function startWebSocketConnection() {
+  const ws = new WebSocket("ws://localhost:8765");
+  ws.onopen = () => console.log("🟢 Connected to Python FaceMesh server");
+
+  ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    currentDistance = data.distance;
+
+    // ✅ แสดงใน console ทุกครั้งที่ได้รับค่าระยะใหม่
+    console.log(`📏 Distance: ${currentDistance.toFixed(1)} cm`);
+
+    updateScreenSizeOverlay(); // อัปเดต overlay ด้วย
+  };
+
+  ws.onclose = () => {
+    console.warn("🔴 Disconnected from Python server. Retrying...");
+    setTimeout(startWebSocketConnection, 2000);
+  };
+}
+
+// --- Calibration (เหมือนเดิม) ---
 function setupCalibration() {
   webgazer.showVideo(true);
   webgazer.showFaceOverlay(true);
@@ -120,7 +149,7 @@ function setupCalibration() {
   function showNextDot() {
     if (index >= points.length) {
       calibrationDot.remove();
-      alert("✅ Calibration เสร็จสมบูรณ์\nตอนนี้ gaze tracking จะทำงานได้แม่นขึ้น");
+      alert("✅ Calibration เสร็จสมบูรณ์");
       return;
     }
     const [px, py] = points[index];
@@ -131,12 +160,7 @@ function setupCalibration() {
 
   calibrationDot.addEventListener("click", () => {
     const [px, py] = points[index];
-    webgazer.recordScreenPosition(
-      px * window.innerWidth,
-      py * window.innerHeight,
-      "click"
-    );
-
+    webgazer.recordScreenPosition(px * window.innerWidth, py * window.innerHeight, "click");
     sampleCount++;
     if (sampleCount < maxSamples) {
       calibrationDot.style.background = sampleCount % 2 === 0 ? "red" : "orange";
@@ -149,7 +173,7 @@ function setupCalibration() {
   showNextDot();
 }
 
-// --- Overlay แสดงขนาดหน้าจอ ---
+// --- Overlay ---
 const screenSizeOverlay = document.createElement("div");
 screenSizeOverlay.style.position = "fixed";
 screenSizeOverlay.style.right = "10px";
@@ -164,11 +188,10 @@ screenSizeOverlay.style.borderRadius = "5px";
 screenSizeOverlay.style.pointerEvents = "none";
 document.body.appendChild(screenSizeOverlay);
 
-// --- Overlay แสดงอายุ/เพศ (ใต้ขนาดหน้าจอ) ---
 const ageOverlay = document.createElement("div");
 ageOverlay.style.position = "fixed";
 ageOverlay.style.right = "10px";
-ageOverlay.style.top = "35px"; // อยู่ใต้ screenSizeOverlay
+ageOverlay.style.top = "35px";
 ageOverlay.style.padding = "5px 10px";
 ageOverlay.style.background = "rgba(0,0,0,0.6)";
 ageOverlay.style.color = "white";
@@ -180,20 +203,19 @@ ageOverlay.style.pointerEvents = "none";
 document.body.appendChild(ageOverlay);
 
 function updateScreenSizeOverlay() {
-  screenSizeOverlay.textContent = `${window.innerWidth} x ${window.innerHeight}`;
+  screenSizeOverlay.textContent =
+    `${window.innerWidth} x ${window.innerHeight} | ${currentDistance.toFixed(1)} cm`;
 }
 
 updateScreenSizeOverlay();
 window.addEventListener("resize", updateScreenSizeOverlay);
 
-// --- ฟังก์ชันวัดอายุจาก video (CDN, ไม่ต้องโหลด /models) ---
+// --- Age/Gender estimation ---
 async function startAgeEstimation() {
   const video = document.querySelector('video');
   if (!video) return;
 
-  // โหลด model จาก CDN
   const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
-
   await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
   await faceapi.nets.ageGenderNet.loadFromUri(MODEL_URL);
 
@@ -209,7 +231,6 @@ async function startAgeEstimation() {
     } else {
       ageOverlay.textContent = "ไม่พบใบหน้า";
     }
-
     requestAnimationFrame(detect);
   }
 

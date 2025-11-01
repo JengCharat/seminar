@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "webgazer and face api",
+  "name": "connect python dynamic distance",
   "version": "1.0.0",
   "description": "ขยายรูปและข้อความตามสายตา พร้อม calibration แบบแม่นยำ",
   "action": {
