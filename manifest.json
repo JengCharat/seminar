@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "before final",
+  "name": "webgazer and face api",
   "version": "1.0.0",
   "description": "ขยายรูปและข้อความตามสายตา พร้อม calibration แบบแม่นยำ",
   "action": {
@@ -12,9 +12,6 @@
     "scripting",
     "storage"
   ],
-  "background": {
-    "service_worker": "background.js"
-  },
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",

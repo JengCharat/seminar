@@ -51,6 +51,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "ENABLE_GAZE") {
     gazeEnabled = true;
     startGazeTracking();
+    startAgeEstimation(); // เริ่มฟังก์ชันวัดอายุพร้อมกัน
   }
   if (msg.type === "DISABLE_GAZE") {
     gazeEnabled = false;
@@ -93,7 +94,7 @@ function setupCalibration() {
   webgazer.showFaceOverlay(true);
   webgazer.showPredictionPoints(true);
 
-  const grid = 3; // 3x3 grid = 9 จุด
+  const grid = 3;
   const points = [];
   for (let i = 0; i < grid; i++) {
     for (let j = 0; j < grid; j++) {
@@ -103,7 +104,7 @@ function setupCalibration() {
 
   let index = 0;
   let sampleCount = 0;
-  const maxSamples = 5; // 🔑 เก็บ 5 ครั้งต่อจุดเพื่อความแม่น
+  const maxSamples = 5;
 
   const calibrationDot = document.createElement("div");
   calibrationDot.style.position = "fixed";
@@ -160,15 +161,57 @@ screenSizeOverlay.style.fontSize = "14px";
 screenSizeOverlay.style.fontFamily = "monospace";
 screenSizeOverlay.style.zIndex = 10000;
 screenSizeOverlay.style.borderRadius = "5px";
-screenSizeOverlay.style.pointerEvents = "none"; // ไม่รบกวน interaction
+screenSizeOverlay.style.pointerEvents = "none";
 document.body.appendChild(screenSizeOverlay);
+
+// --- Overlay แสดงอายุ/เพศ (ใต้ขนาดหน้าจอ) ---
+const ageOverlay = document.createElement("div");
+ageOverlay.style.position = "fixed";
+ageOverlay.style.right = "10px";
+ageOverlay.style.top = "35px"; // อยู่ใต้ screenSizeOverlay
+ageOverlay.style.padding = "5px 10px";
+ageOverlay.style.background = "rgba(0,0,0,0.6)";
+ageOverlay.style.color = "white";
+ageOverlay.style.fontSize = "14px";
+ageOverlay.style.fontFamily = "monospace";
+ageOverlay.style.zIndex = 10000;
+ageOverlay.style.borderRadius = "5px";
+ageOverlay.style.pointerEvents = "none";
+document.body.appendChild(ageOverlay);
 
 function updateScreenSizeOverlay() {
   screenSizeOverlay.textContent = `${window.innerWidth} x ${window.innerHeight}`;
 }
 
-// เรียกครั้งแรก
 updateScreenSizeOverlay();
-
-// อัปเดตทุกครั้งที่ resize
 window.addEventListener("resize", updateScreenSizeOverlay);
+
+// --- ฟังก์ชันวัดอายุจาก video (CDN, ไม่ต้องโหลด /models) ---
+async function startAgeEstimation() {
+  const video = document.querySelector('video');
+  if (!video) return;
+
+  // โหลด model จาก CDN
+  const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
+
+  await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+  await faceapi.nets.ageGenderNet.loadFromUri(MODEL_URL);
+
+  async function detect() {
+    const detections = await faceapi
+      .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+      .withAgeAndGender();
+
+    if (detections) {
+      const age = Math.round(detections.age);
+      const gender = detections.gender;
+      ageOverlay.textContent = `ประมาณอายุ: ${age} ปี | เพศ: ${gender}`;
+    } else {
+      ageOverlay.textContent = "ไม่พบใบหน้า";
+    }
+
+    requestAnimationFrame(detect);
+  }
+
+  detect();
+}
