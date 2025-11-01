@@ -1,8 +1,9 @@
 let gazeEnabled = false;
 let currentElement = null;
-let currentDistance = 50; // เริ่มต้นระยะเฉลี่ย (cm)
-const BASE_SCALE = 1.0;
-const DURATION = 200;
+let currentDistance = 50;
+const BASE_FONT_SIZE = 16;
+let fontScaled = false;
+let alertShown = false;
 
 // --- smoothing เพื่อลด jitter ---
 let lastX = null, lastY = null;
@@ -16,56 +17,30 @@ function smoothGaze(x, y, alpha = 0.2) {
   return { x: lastX, y: lastY };
 }
 
-// --- คำนวณ scale ตามระยะที่ได้จาก Python ---
-function getScaleFromDistance(distance) {
-  const clamped = Math.max(20, Math.min(80, distance)); // จำกัดช่วง 20–80 cm
-  const scale = BASE_SCALE + (80 - clamped) / 100; // ยิ่งใกล้ ยิ่งขยาย
-  return scale;
-}
-
-// --- ขยาย element ตาม gaze + ระยะ ---
-function enlargeElementByGaze(el, gazeX, gazeY) {
-  const rect = el.getBoundingClientRect();
-  if (
-    gazeX >= rect.left && gazeX <= rect.right &&
-    gazeY >= rect.top && gazeY <= rect.bottom
-  ) {
-    if (currentElement && currentElement !== el) resetElement(currentElement);
-
-    const offsetX = ((gazeX - rect.left) / rect.width) * 100;
-    const offsetY = ((gazeY - rect.top) / rect.height) * 100;
-    const scale = getScaleFromDistance(currentDistance);
-
-    el.style.transition = `transform ${DURATION}ms ease`;
-    el.style.transformOrigin = `${offsetX}% ${offsetY}%`;
-    el.style.transform = `scale(${scale})`;
-    el.style.zIndex = 999;
-
-    currentElement = el;
-  } else if (currentElement === el) {
-    resetElement(el);
-  }
-}
-
-function resetElement(el) {
-  el.style.transform = 'scale(1)';
-  el.style.transformOrigin = 'center center';
-  el.style.zIndex = '';
-  el.style.transition = `transform ${DURATION}ms ease`;
-  if (currentElement === el) currentElement = null;
-}
+// --- วงกลม gaze แสดงตำแหน่ง ---
+const gazeCircle = document.createElement("div");
+gazeCircle.style.position = "fixed";
+gazeCircle.style.width = "120px";
+gazeCircle.style.height = "120px";
+gazeCircle.style.borderRadius = "50%";
+gazeCircle.style.background = "rgba(0,150,255,0.3)";
+gazeCircle.style.pointerEvents = "none";
+gazeCircle.style.zIndex = 9999;
+gazeCircle.style.transition = "left 0.05s ease, top 0.05s ease";
+document.body.appendChild(gazeCircle);
 
 // --- ฟัง message จาก popup ---
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "ENABLE_GAZE") {
     gazeEnabled = true;
-    startWebSocketConnection(); // ✅ เริ่มเชื่อมต่อ Python
+    startWebSocketConnection();
     startGazeTracking();
     startAgeEstimation();
   }
   if (msg.type === "DISABLE_GAZE") {
     gazeEnabled = false;
     if (currentElement) resetElement(currentElement);
+    resetAllScaling(); // รีเซ็ตการขยายทั้งหมดเมื่อปิดการทำงาน
   }
   if (msg.type === "CALIBRATE") {
     setupCalibration();
@@ -85,15 +60,54 @@ function startGazeTracking() {
   if (window.webgazerInitialized) return;
   window.webgazerInitialized = true;
 
+  webgazer.showVideo(true);
+  webgazer.showFaceOverlay(true);
+  webgazer.showFaceFeedbackBox(false);
+  webgazer.showPredictionPoints(false);
+
   webgazer.setGazeListener((data) => {
     if (!gazeEnabled || !data) return;
     let { x, y } = smoothGaze(data.x, data.y);
     x = getCorrectedX(x);
 
+    gazeCircle.style.left = `${x - 60}px`;
+    gazeCircle.style.top = `${y - 60}px`;
+
     document.querySelectorAll("img, p, span, h1, h2, h3, h4, h5, h6").forEach(el => {
       enlargeElementByGaze(el, x, y);
     });
   }).begin();
+}
+
+// --- ขยาย element ตาม gaze ---
+function enlargeElementByGaze(el, gazeX, gazeY) {
+  const rect = el.getBoundingClientRect();
+  if (
+    gazeX >= rect.left && gazeX <= rect.right &&
+    gazeY >= rect.top && gazeY <= rect.bottom
+  ) {
+    if (currentElement && currentElement !== el) resetElement(currentElement);
+
+    const offsetX = ((gazeX - rect.left) / rect.width) * 100;
+    const offsetY = ((gazeY - rect.top) / rect.height) * 100;
+
+    el.style.transition = `transform 0.2s ease`;
+    el.style.transformOrigin = `${offsetX}% ${offsetY}%`;
+    el.style.transform = `scale(1.2)`;
+    el.style.zIndex = 999;
+
+    currentElement = el;
+  } else if (currentElement === el) {
+    resetElement(el);
+  }
+}
+
+function resetElement(el) {
+  el.style.transform = 'scale(1)';
+  el.style.transformOrigin = 'center center';
+  el.style.zIndex = '';
+  el.style.transition = `transform 0.2s ease`;
+  if (currentElement === el) currentElement = null;
 }
 
 // --- WebSocket จาก Python ---
@@ -104,11 +118,10 @@ function startWebSocketConnection() {
   ws.onmessage = (event) => {
     const data = JSON.parse(event.data);
     currentDistance = data.distance;
-
-    // ✅ แสดงใน console ทุกครั้งที่ได้รับค่าระยะใหม่
     console.log(`📏 Distance: ${currentDistance.toFixed(1)} cm`);
 
-    updateScreenSizeOverlay(); // อัปเดต overlay ด้วย
+    handleDistanceEffects(currentDistance);
+    updateScreenSizeOverlay();
   };
 
   ws.onclose = () => {
@@ -117,11 +130,59 @@ function startWebSocketConnection() {
   };
 }
 
-// --- Calibration (เหมือนเดิม) ---
+// --- ฟังก์ชันรีเซ็ตการขยายทั้งหมด ---
+function resetAllScaling() {
+  const elementsToReset = document.querySelectorAll('div, h1, h2, h3, h4, h5, h6, a');
+  elementsToReset.forEach(element => {
+    element.style.fontSize = "";
+    element.style.transform = "";
+    element.style.transition = "";
+  });
+  fontScaled = false;
+  console.log("🔠 Reset all scaling to normal");
+}
+
+// --- ปรับ font-size ตามระยะ (แก้ไขแล้ว) ---
+// --- ปรับ font-size ตามระยะ (แบบกำหนดขนาดตายตัว) ---
+function handleDistanceEffects(distance) {
+  const elementsToScale = document.querySelectorAll('div, h1, h2, h3, h4, h5, h6, a, p, span, li, button');
+  
+  if (distance > 70) {
+    if (!fontScaled) {
+      // กำหนดขนาดฟอนต์ตายตัวเมื่อระยะเกิน 70cm
+      elementsToScale.forEach(element => {
+        element.style.transition = "font-size 0.5s ease";
+        element.style.fontSize = "24px"; // ขนาดฟอนต์ใหญ่
+      });
+      console.log("🔠 Font size increased to 24px (distance > 70 cm)");
+      fontScaled = true;
+    }
+  } else {
+    // รีเซ็ตเป็นค่าเดิมเมื่อระยะน้อยกว่าหรือเท่ากับ 70cm
+    if (fontScaled) {
+      elementsToScale.forEach(element => {
+        element.style.transition = "font-size 0.5s ease";
+        element.style.fontSize = ""; // คืนค่าดั้งเดิม
+      });
+      console.log("🔠 Font size reset to normal");
+      fontScaled = false;
+    }
+  }
+
+  // การแจ้งเตือน
+  if (distance >= 100 && !alertShown) {
+    alert("😅 I can't see your face!");
+    alertShown = true;
+  } else if (distance < 100) {
+    alertShown = false;
+  }
+}
+
+// --- Calibration ---
 function setupCalibration() {
   webgazer.showVideo(true);
   webgazer.showFaceOverlay(true);
-  webgazer.showPredictionPoints(true);
+  webgazer.showPredictionPoints(false);
 
   const grid = 3;
   const points = [];
@@ -131,9 +192,7 @@ function setupCalibration() {
     }
   }
 
-  let index = 0;
-  let sampleCount = 0;
-  const maxSamples = 5;
+  let index = 0, sampleCount = 0, maxSamples = 5;
 
   const calibrationDot = document.createElement("div");
   calibrationDot.style.position = "fixed";
